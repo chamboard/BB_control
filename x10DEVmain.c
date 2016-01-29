@@ -1,10 +1,12 @@
-// x10DEVmain.C
 //
-// dev'ing for IO24 burt output mode on port input B ( mi-cd)
+// x10DEVmain.c
+//
+// dev'ing for IO24 burst output mode on port input B (mi-cd)
 //
 // hardware mod : divider resistors,removed, serial resistor 100k replaced with 330ohm
 //
-// function io24 : 0x0a : set input B as output burst
+// function io24 : 0x0a : set input B as output burst PORT
+// function io24 : 0x0b : disable input B as output burst PORT
 // function io24 : 0x0c : output data at index, delay with value at index+16
 // function io24 : 0x0d : output data at index (32 values max) , with fixed delay value between each data (value located at 0x153 )
 //
@@ -17,7 +19,8 @@
 typedef float float_t;
 #define _BB_BOARD	0x07
 #define _IO24_BOARD	0x01
-// x10 command brief
+// CORE 0x10 command briefs
+// firmware rev:6 (beta)
 #define _IMMEDIATE					0x01
 #define _SERVO_MODE_RUN				0x05
 #define _STOP						0x06
@@ -26,10 +29,12 @@ typedef float float_t;
 #define _BURST_OUTPUT_EXECUTE		0x0c
 #define _BURST_FIXOUTPUT_EXECUTE	0x0d
 //
-// lcd command helpers
+// lcd command helpers HD44780 / compatible
 //
-#define _LCD_CURSOR_0_0		0x80	// ram, line0 pos 0
-#define _LCD_CURSOR_1_0		0xC0	// ram , line1 pos 0
+#define _LCD_CURSOR_0_0		0x80	// ram ,ROW 0,cursor 0
+#define _LCD_CURSOR_1_0		0xC0	// ram ,ROW 0,cursor 0
+#define _LCD_CURSOR_2_0		0x90	// ram ,ROW 0,cursor 0
+#define _LCD_CURSOR_3_0		0xD0	// ram ,ROW 0,cursor 0
 //
 //
 #define _EXTVIN_ADJUST  0.5 /* resitor tolerance : user's adjustment if needed */
@@ -198,52 +203,63 @@ int main(int argc, char* argv[])
 	txb[3]=0;	// n/A
 	errors+=CHAN_setBytes(_IO24_BOARD,4,txb);
 	printf("errors=%d\n",errors);//errors=0;
-	//
+	// go to output burst mode for input B
 	CHAN_command(_IO24_BOARD,_SET_D_OUTPUT);
-	//
+	// LCD , 4 Bit init
+	// connector wiring :
+	// b0,b1 : n/a
+	// b2: LCD R/S
+	// b3: LCD E
+	// b4,b5,b6,b7 = LCD data 4,5,6,7
+	// LCD wiring :
+	// R/W : tied to ground( always write) , using program timers to wait for LCD command execution times ( no BusyFlag read)
+	// LCD data 0,1,2,3,-> to ground ( not used, using 4bit lcd mode of hd44780 chips )
 	burst_do_command(1,0b00110000,200);	// -- 0x30
 	burst_do_command(1,0b00110000,200);	// -- 0x30
 	burst_do_command(1,0b00110000,200);	// -- 0x30
-	burst_do_command(1,0b00100000,200);	// -- 0x20 set interface : 4 bit mode  partir de la.
-	//
+	burst_do_command(1,0b00100000,200);	// -- 0x20 set interface : 4 bit mode from there. now have to send the 2 nibbles 
+	// set LCD:
 	burst_do_command(2,0b00101000,200);		// 2 lines, 5*7 font
 	burst_do_command(2,0b00001111,200);		// display on,cursor on, blink on
-	usleep(100000);
+	usleep(100000);							// long enough !
 	burst_do_command(2,0b00000001,200);		// clear display
 	usleep(100000);
 	// test: disable cursor
+	// loopcount+display
 	burst_do_command(2,0b00001100,200);		// Display=ON Cursor=OFF Blink=OFF
 	for(i=0;i<50;i++)
 	{
 		burst_do_command(2,_LCD_CURSOR_0_0,1);				// cursor at line 0,pos 0
 		sprintf(pb,"run:%4.4d",i);
 		burst_out(pb,1);
-		usleep(20000);						//250ms to display
+		usleep(20000);										//250ms to display
 	}
+	// some text ..
 	burst_do_command(2,_LCD_CURSOR_1_0,1);				// cursor at line 1,pos 0
 	burst_out("0123456789abcdef",10);
 	//
 	usleep(1000000);
-	// read adc vals, display
+	// use BusBoard datas now :
+	// read adc vals MAIN,BAT,3v3 embedded regulator values and display on the LCD 
 	for(i=0;i<100;i++)
 	{
 		CHAN_addr(_BB_BOARD,0x100);
 		CHAN_getBytes(_BB_BOARD,6,rxb);		// get main volt, bat volt, host 3v3 values
 		//
 		// top line, main
-		main_val=_BB_MAIN_VOLTS_AS_FLOAT(&rxb[0]); 
+		main_val=_BB_MAIN_VOLTS_AS_FLOAT(&rxb[0]);			// macro'ed
 		sprintf(pb,"MAIN:%3.1fV ",main_val);
 		burst_do_command(2,_LCD_CURSOR_0_0,1);				// cursor at line 0,pos 0
-		burst_out(pb,1);
+		burst_out(pb,1);									// write the text to LCD using IO24's burst output mode
 		//
 		bat_val=_BB_BATTERY_VOLTS_AS_FLOAT(&rxb[2]); 
 		trois_val=_BB_HOST_3V3_AS_FLOAT(&rxb[4]); 
 		sprintf(pb,"3V3:%3.1fV BAT:%3.1fV",trois_val,bat_val);
-		burst_do_command(2,_LCD_CURSOR_1_0,1);				// cursor at line 1,pos 0
+		burst_do_command(2,_LCD_CURSOR_2_0,1);				// cursor at line 1,pos 0
 		burst_out(pb,1);
 		usleep(250000);	// delay between bat scans
 	}
-		
+	// end, close, check for any errors (should always be ZERO)	
 	printf("errors=%d\n",errors);errors=0;
 	CHAN_close();
 	//
