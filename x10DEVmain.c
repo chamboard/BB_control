@@ -13,8 +13,19 @@
 
 #include <stdint.h>
 #include <stdio.h>
+
+// machine IP display needed:
+#include <string.h>				// strncopy into the func
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <net/if.h>
+#include <unistd.h>
+#include <arpa/inet.h>
 //
 #include <CHANTILLY_BP.h>
+//
+//
+void getIP_asText(char* interfacename,char* targetbuf);			// for ip display on LCD, as text ex: getIP_asText("eth0",myprintbuffer[])
 //
 typedef float float_t;
 #define _BB_BOARD	0x07
@@ -29,12 +40,12 @@ typedef float float_t;
 #define _BURST_OUTPUT_EXECUTE		0x0c
 #define _BURST_FIXOUTPUT_EXECUTE	0x0d
 //
-// lcd command helpers HD44780 / compatible
+// lcd command helpers HD44780 / compatible 20x4
 //
 #define _LCD_CURSOR_0_0		0x80	// ram ,ROW 0,cursor 0
 #define _LCD_CURSOR_1_0		0xC0	// ram ,ROW 0,cursor 0
 #define _LCD_CURSOR_2_0		0x90	// ram ,ROW 0,cursor 0
-#define _LCD_CURSOR_3_0		0xD0	// ram ,ROW 0,cursor 0
+#define _LCD_CURSOR_3_0		0xD4	// ram ,ROW 0,cursor 0
 //
 //
 #define _EXTVIN_ADJUST  0.5 /* resitor tolerance : user's adjustment if needed */
@@ -235,8 +246,9 @@ int main(int argc, char* argv[])
 		usleep(20000);										//250ms to display
 	}
 	// some text ..
-	burst_do_command(2,_LCD_CURSOR_1_0,1);				// cursor at line 1,pos 0
-	burst_out("0123456789abcdef",10);
+	getIP_asText("eth0",pb);
+	burst_do_command(2,_LCD_CURSOR_3_0,1);				// cursor at line 1,pos 0
+	burst_out(pb,10);
 	//
 	usleep(1000000);
 	// use BusBoard datas now :
@@ -254,15 +266,33 @@ int main(int argc, char* argv[])
 		//
 		bat_val=_BB_BATTERY_VOLTS_AS_FLOAT(&rxb[2]); 
 		trois_val=_BB_HOST_3V3_AS_FLOAT(&rxb[4]); 
-		sprintf(pb,"3V3:%3.1fV BAT:%3.1fV",trois_val,bat_val);
-		burst_do_command(2,_LCD_CURSOR_2_0,1);				// cursor at line 1,pos 0
+		sprintf(pb,"EMBR:%3.1fV  BAT :%3.1fV",trois_val,bat_val);
+		burst_do_command(2,_LCD_CURSOR_1_0,1);				// cursor at line 1,pos 0
 		burst_out(pb,1);
 		usleep(250000);	// delay between bat scans
 	}
 	// end, close, check for any errors (should always be ZERO)	
+	// clear display data*
+	burst_do_command(2,0b00000001,200);		// clear display
+	usleep(100000);
+	//
 	printf("errors=%d\n",errors);errors=0;
 	CHAN_close();
-	//
-	
+	//	
 	return 0;
+}
+//
+void getIP_asText(char* interfacename,char* targetbuf)
+{
+    int fd;
+    struct ifreq ifr;     
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+	// ipv4
+    ifr.ifr_addr.sa_family = AF_INET;
+	// cpu to struct
+    strncpy(ifr.ifr_name , interfacename , IFNAMSIZ-1); 
+    ioctl(fd, SIOCGIFADDR, &ifr); 
+    close(fd); 
+    //display result
+    sprintf(targetbuf,"%s:%s" ,interfacename,inet_ntoa(((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr));
 }
